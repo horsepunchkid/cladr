@@ -1,0 +1,559 @@
+#!/usr/bin/perl
+
+use strict;
+
+use Getopt::Long qw(:config no_ignore_case no_auto_abbrev);
+use LWP::UserAgent;
+use URI::Encode 'uri_encode';
+use HTML::TreeBuilder;
+use HTML::TreeBuilder::XPath;
+use Flickr::API;
+use XML::Parser::Lite::Tree::XPath;
+use List::Util 'first';
+use Log::Log4perl ':easy';
+use Data::Dumper;
+use Config::Simple;
+
+my (
+    $help,
+    $before_date,
+    $skip_clades,
+    $skip_ranks,
+    $skip_eolid,
+    $skip_common,
+    $search_tags,
+    $threshold,
+    $fix_eolid,
+    $fix_binomen,
+    $fix_genus,
+    $fix_family,
+    $from_file,
+    $config,
+    $token,
+    $user,
+    $verbosity,
+    $force,
+    $yes,
+);
+
+$threshold = 8;
+$config = "$ENV{HOME}/.cladrrc";
+
+# Parse commandline options {{{
+
+my $opts = GetOptions(
+    'help|h'            => \$help,
+    'before-date|b=s'   => \$before_date,
+    'skip-clades|c'     => \$skip_clades,
+    'skip-ranks|r'      => \$skip_ranks,
+    'skip-eolid|E'      => \$skip_eolid,
+    'skip-common|C'     => \$skip_common,
+    'tags|t=s'          => \$search_tags,
+    'threshold|T=i'     => \$threshold,
+    'eolid|e=i'         => \$fix_eolid,
+    'binomen|B=s'       => \$fix_binomen,
+    'genus|G=s'         => \$fix_genus,
+    'family|F=s'        => \$fix_family,
+    'from-file=s'       => \$from_file,
+    'token|t=s'         => \$token,
+    'user|u=s'          => \$user,
+    'verbosity|v+'      => \$verbosity,
+    'force|f'           => \$force,
+    'yes|y'             => \$yes,
+);
+
+if($help || !$opts) {
+    my $usage = <<USAGE;
+Usage: $0 [options] [photoids...]
+
+Options:
+    -h --help               Print help and exit
+    -b --before-date        Look for photos prior to this date
+    -c --skip-clades        Skip tagging with clades
+    -r --skip-ranks         Skip tagging with ranks
+    -E --skip-eolid         Skip tagging with EOLID
+    -C --skip-common        Skip tagging with common name
+    -t --tags=foo,bar       Restrict to photos tagged thusly
+    -T --threshold=8        Number of tags before assuming photo already tagged
+    -e --eolid=31415        Assume this EOLID for the photos
+    -B --binomen='Foo bar'  Assume this binomen for the photos
+    -G --genus=Foo          Assume this genus for the photos
+    -F --family=Foo         Assume this family for the photos
+    --from-file             Read Flickr photo IDs from this file
+    -t --token              Authentication token if not in ~/.cladrrc
+    -u --user               User if not in ~/.cladrrc
+    -v --verbosity          How much yammering to do
+    -f --force              Force tagging, even if tagged as unidentified
+    -y --yes                Answer "yes" to all questions; run non-interactively
+USAGE
+    if($help) {
+        print $usage;
+        exit;
+    }
+    else {
+        print STDERR $usage;
+        exit 1;
+    }
+}
+
+# }}}
+
+Log::Log4perl->easy_init({
+    level => $verbosity ? $DEBUG : $INFO,
+    layout => "%p\t%m [%M]%n",
+});
+
+if(-r $config) {
+    my %config;
+    Config::Simple->import_from($config, \%config);
+    # Strip off "default" namespace from Config::Simple
+    $config{substr($_, 8)} = delete $config{$_} for keys %config;
+
+    $user = $config{user};
+    $token = $config{token};
+
+    die "Invalid token!\n" unless $token =~ /^\d+-[0-9a-f]+$/;
+}
+
+my $key = '707edec31e290b6798d3d857d4de54f2';
+my $secret = '98d74947dbe972d0';
+
+my $flickr = new Flickr::API({
+    key => $key,
+    secret => $secret,
+});
+
+if(!$token) {
+    print "No authentication token found. Beginning authenticaiton process.\n";
+    authenticate();
+    exit 2 unless $token && $user;
+}
+
+my $ua = LWP::UserAgent->new;
+
+$Data::Dumper::Indent = 1;
+
+my @taxa = qw(Kingdom Phylum Class Order Family Genus Species);
+my %taxa;
+$taxa{$_} = keys %taxa for @taxa;
+
+my @photos = @ARGV ? @ARGV
+    : $from_file ? ()
+    : get_species_photos();
+
+# Cache clades and ranks
+my %cmap;
+my %rmap;
+
+for(@photos) {
+    process_photo($_);
+}
+
+if($from_file) {
+    open FILE, $from_file or die "Couldn't open from-file!\n";
+    while(<FILE>) {
+        chomp;
+        process_photo($_);
+    }
+    close FILE;
+}
+
+sub process_photo { # {{{
+    my $photo_id = shift;
+    print "\n===============================\n";
+    DEBUG "Looking at $photo_id";
+    my @tags = get_tags($photo_id);
+    next if @tags > $threshold;
+    next if !$force && first { $_ eq 'taxonomy:identified=0' } @tags;
+    my $taxon = $fix_binomen || $fix_genus || $fix_family || get_most_specific_tag(@tags);
+
+    my @tags_to_add;
+
+    if(!$skip_ranks) {
+        my %ranks = @{ $rmap{$taxon} ||= [get_ranks($taxon)] };
+        push @tags_to_add, rankify_photo($photo_id, %ranks);
+    }
+
+    if(!$skip_clades || !$skip_eolid || !$skip_common) {
+        my $eolid = $fix_eolid || get_eolid(@tags);
+        my @clades = $eolid ? @{ $cmap{$eolid} ||= [get_clades($eolid)] } : ();
+        push @tags_to_add, cladify_photo($photo_id, @clades);
+    }
+
+    my %tag_set = map { $_ => 1 } @tags;
+    my @new_tags = grep { !$tag_set{$_} } @tags_to_add;
+
+    INFO "No new tags to add" unless @new_tags;
+    next unless @new_tags;
+
+    DEBUG "Tags to add: ".Dumper(\@new_tags);
+    sleep 5 if $yes;
+
+    add_tags($photo_id, @new_tags);
+} # }}}
+
+sub get_most_specific_tag { # {{{
+    my @tags = @_;
+    my $taxon;
+    for my $rank ('trinomial', 'binomial', reverse @taxa) {
+        $taxon = first { /^taxonomy:$rank=/i } @tags;
+        $taxon =~ s/^taxonomy:$rank=//i;
+        DEBUG "Rank $rank" if $taxon;
+        last if $taxon;
+    }
+    WARN "No valid taxon found" unless $taxon;
+    return unless $taxon;
+    DEBUG "Found taxon /$taxon/";
+
+    $taxon
+} # }}}
+
+sub get_eolid { # {{{
+    my @tags = @_;
+    my $eolid = first { /^taxonomy:eolid=/ } @tags;
+    $eolid =~ s/^taxonomy:eolid=//;
+    if(!$eolid) {
+        my $taxon;
+        for my $rank ('trinomial', 'binomial', reverse @taxa) {
+            $taxon = first { /^taxonomy:$rank=/i } @tags;
+            $taxon =~ s/^taxonomy:$rank=//i;
+            DEBUG "Rank $rank" if $taxon;
+            last if $taxon;
+        }
+        WARN "No valid taxon found" unless $taxon;
+        return unless $taxon;
+        DEBUG "Found taxon /$taxon/";
+        $eolid = find_eolid($taxon);
+    }
+    WARN "No valid EOLID found" unless $eolid;
+    return unless $eolid;
+    INFO "Found EOLID $eolid";
+    $eolid
+} # }}}
+
+sub cladify_photo { # {{{
+    my $photo_id = shift;
+    my @clades = @_;
+    my @clade_tags;
+    my $eolid = shift @clades;
+    my $common_name = shift @clades;
+    push @clade_tags, "taxonomy:eolid=$eolid" unless $skip_eolid;
+    push @clade_tags, "taxonomy:common=$common_name" if $common_name && !$skip_common;
+    if(!$skip_clades) {
+        push @clade_tags, "taxonomy:claderoot=$clades[0]";
+        for(my $i=0; $i<@clades-1; $i++) {
+            push @clade_tags, "clade:$clades[$i]=$clades[$i+1]";
+        }
+    }
+    WARN "Too many clades" if @clades > 11;
+    while(1) {
+        DEBUG Dumper(\@clade_tags);
+
+        my $use;
+        if(!$yes) {
+            print "Use these tags? [Y/n/u/-/+] ";
+            $use = <STDIN>;
+            chomp $use;
+        }
+        else {
+            $use = 'y';
+        }
+
+        return if $use =~ /^n$/i;
+        last if !$use || $use =~ /^y$/i;
+
+        pop @clade_tags if $use =~ /^-$/;
+
+        if($use =~ /^\+(.+)/) {
+            my $new_tag = $1;
+            if($use =~ /^\+(\w+):(\w+)=(\w+)$/) {
+                @clade_tags = grep { $_ !~/^$1:$2=/ } @clade_tags;
+            }
+            push @clade_tags, $new_tag;
+        }
+
+        return cladify_photo($photo_id, get_clades($use)) if $use =~ /^\d+$/;
+
+        if($use =~ /^u$/i) { # go "up"
+            INFO "Getting clades for $clades[-2] instead...";
+            my $eolid = find_eolid($clades[-2]);
+            return cladify_photo($photo_id, get_clades($eolid));
+        }
+
+        if($use !~ /^\+/ && length($use) > 1) {
+            my $eolid = find_eolid($use);
+            next unless $eolid;
+            return cladify_photo($photo_id, get_clades($eolid));
+        }
+    }
+    @clade_tags
+} # }}}
+
+sub rankify_photo { # {{{
+    my $photo_id = shift;
+    my %ranks = @_;
+    my @rank_tags;
+    for(@taxa) {
+        next unless $ranks{$_};
+        push @rank_tags, "taxonomy:".lc($_)."=$ranks{$_}";
+    }
+    while(1) {
+        DEBUG Dumper(\@rank_tags);
+        print "Use these tags? [Y/n/-/+] ";
+        my $use = <STDIN>;
+        chomp $use;
+        return if $use =~ /^n$/i;
+        pop @rank_tags if $use =~ /-/;
+        push @rank_tags, $1 if $use =~ /\+(.+)/;
+        if($use !~ /^\+/ && length($use) > 1) {
+            return rankify_photo($photo_id, get_ranks($use));
+        }
+        last if !$use || $use =~ /^y$/i;
+    }
+    @rank_tags
+} # }}}
+
+sub add_tags { # {{{
+    my ($photo_id, @tags) = @_;
+    INFO "Tagging $photo_id";
+    my $response = $flickr->execute_method('flickr.photos.addTags', {
+        photo_id => $photo_id,
+        tags => join(' ', map { "\"$_\"" } @tags),
+        auth_token => $token,
+    });
+    # XXX confirm response
+} # }}}
+
+sub authenticate { # {{{
+    print "\nPlease visit this URL in your browser:\n\n";
+    print $flickr->request_auth_url('write');
+    print "\n\n...and authorize this application. Copy the 'frob' from\n";
+    print "the URL and enter it here.\n\n";
+    print "Frob: ";
+    my $frob = <STDIN>;
+    die "Invalid frob!\n" unless $frob =~ /^\d+-[0-9a-f]+-\d+$/;
+
+    my $response = $flickr->execute_method('flickr.auth.getToken', { frob => $frob });
+    my $xpath = new XML::Parser::Lite::Tree::XPath($response->{tree});
+    $token = $xpath->select_nodes('//token')->[0]{children}->[0]{content};
+    print Dumper($xpath->select_nodes('//user'));
+    $user = $xpath->select_nodes('//user')->[0]{attributes}{nsid};
+    print "\nYour token: $token\n";
+
+    open RC, ">$config" or (warn "Couldn't open $config to save token!\n" and return);
+    print RC "token = $token\nuser = $user\n";
+    close RC;
+    print "Token saved to ~/.cladrrc\n";
+} # }}}
+
+sub get_species_photos { # {{{
+    my $response = $flickr->execute_method('flickr.photos.search', {
+        user_id => $user,
+        tags => $search_tags,
+        machine_tags => 'taxonomy:',
+        per_page => 500,
+        sort => 'date-posted-desc',
+        max_upload_date => $before_date,
+        #extras => 'tags,machine_tags',
+    });
+    WARN "Bad response from search!" unless $response->is_success;
+    return unless $response->is_success;
+    my $xpath = new XML::Parser::Lite::Tree::XPath($response->{tree});
+
+    map {
+        $_->{attributes}{id}
+    } @{$xpath->select_nodes('//photo')};
+} # }}}
+
+sub get_tags { # {{{
+    my $photo = shift;
+    INFO "http://flickr.com/photos/$user/$photo/";
+    my $response = $flickr->execute_method('flickr.photos.getInfo', {
+        photo_id => $photo,
+    });
+    my $xpath = new XML::Parser::Lite::Tree::XPath($response->{tree});
+
+    INFO "Title: ". $xpath->select_nodes('//title')->[0]{children}[0]{content};
+    my @tags = sort map {
+        $_->{name} eq 'tag' ? $_->{attributes}{raw} : ()
+    } @{$xpath->select_nodes('//tags')->[0]{children}};
+
+    INFO Dumper(\@tags);
+
+    @tags
+} # }}}
+
+sub find_eolid { # {{{
+    my $taxon = join ' ', @_;
+
+    my $eolid;
+
+    my $url = "http://eol.org/search?q=".uri_encode($taxon);
+    my $response = $ua->get($url);
+
+    if($response->request->uri =~ qr{/pages/(\d+)}) {
+        $eolid = $1;
+    }
+    else {
+        INFO "Ambiguous search result $url";
+        my $tree = HTML::TreeBuilder::XPath->new_from_content($response->content);
+        my @items = $tree->findnodes(q{//ul[@class='object_list']/li[@class='taxon']});
+        return unless @items;
+        my %results;
+        for(@items) {
+            $_->detach;
+            my $name = $_->findvalue('//h4');
+            next unless $name;
+            my $id = $_->findvalue(q{//h4/a/@href});
+            $id =~ s{/pages/(\d+)/overview}{$1};
+            $results{$name} = $id if !$results{$name} || $id < $results{$name};
+        }
+        my @preferred = sort {
+            (($taxon eq $b) <=> ($taxon eq $a))
+            || ($taxon =~ /$b/ || $b =~ /$taxon/
+                <=> $taxon =~ /$a/ || $a =~ /$taxon/)
+            || $results{$a} <=> $results{$b}
+        } keys %results;
+        DEBUG Dumper(join("\n", map { "$_ ($results{$_})" } @preferred));
+        my $best = $preferred[0];
+        DEBUG "Gonna go with /$best/ -- http://eol.org/pages/$results{$best}";
+        $eolid = $results{$best};
+    }
+
+    $eolid
+} # }}}
+
+sub get_clades { # {{{
+    my ($eolid) = @_;
+    my $base = "http://eol.org/pages/$eolid";
+
+    my $response;
+    my $tree;
+
+    $response = $ua->get("$base");
+    $tree = HTML::TreeBuilder->new_from_content($response->decoded_content);
+    my $common_name = $tree->look_down(_tag => 'h2', title => qr/Preferred common name/);
+    if($common_name) {
+        $common_name = $common_name->content->[0];
+        $common_name =~ s/^\s+//;
+        $common_name =~ s/\s+$//;
+    }
+
+    $response = $ua->get("$base/names");
+    $tree = HTML::TreeBuilder->new_from_content($response->decoded_content);
+
+    my $orgs = $tree->look_down(_tag => 'table', class => 'standard classifications');
+    my @orgs = $orgs->look_down(_tag => 'tr') if $orgs;
+    WARN "No nomenclatures available" unless @orgs;
+    return unless @orgs;
+    DEBUG @orgs ." nomenclature(s) found at $base/names";
+    my $hierarchy_entry;
+    for(@orgs) {
+        my ($td) = $_->descendants;
+        my $classification = $_->look_down(_tag => 'a', href => qr/content_partners/);
+        next unless $classification;
+        $classification = $classification->content->[0];
+        if($classification =~ /Catalogue of Life/) {
+            DEBUG "Found in ITIS Catalogue of Life";
+            my $a = $td->content->[2];
+            my $href = $a->{href};
+            $hierarchy_entry = $1 if $href =~ m{/pages/$eolid/hierarchy_entries/(\d+)/overview};
+        }
+    }
+    if(!$hierarchy_entry) {
+        for(@orgs) {
+            my ($td) = $_->descendants;
+            next unless $td->tag eq 'td';
+            my $classification = $td->content->[0]->content->[1]->content->[0];;
+            if($classification =~ /NCBI/) {
+                DEBUG "Found in NCBI";
+                my $a = $td->content->[2];
+                my $href = $a->{href};
+                $hierarchy_entry = $1 if $href =~ m{/pages/$eolid/hierarchy_entries/(\d+)/overview};
+            }
+        }
+    }
+    WARN "No suitable nomenclature found!" unless $hierarchy_entry;
+    return unless $hierarchy_entry;
+
+    DEBUG "http://eol.org/pages/$eolid/hierarchy_entries/$hierarchy_entry/tree?full=true";
+    $response = $ua->get("http://eol.org/pages/$eolid/hierarchy_entries/$hierarchy_entry/tree?full=true");
+
+    $tree = HTML::TreeBuilder::XPath->new_from_content($response->content);
+    my $li = $tree->findnodes('/html/body/ul/li')->shift;
+    my @ancestors;
+    while(1) {
+        my $t = $li->findvalue('.');
+        $t =~ s/\+.*//;
+        $t =~ s/^ //;
+        $t =~ s/ $//;
+        $t =~ s/ [A-Z].*//;
+        $t =~ s/ \(.*//;
+        push @ancestors, $t;
+        last unless $li->exists('./a');
+        $li = $li->findnodes('./ul/li')->shift;
+        last unless $li;
+    }
+    for(my $i = 0; $i < @ancestors; $i++) {
+        next unless $ancestors[$i] =~ / /;
+        my @parts = split / /, $ancestors[$i];
+        if($parts[0] eq $ancestors[$i-2]) {
+            shift @parts;
+        }
+        if($parts[0] eq $ancestors[$i-1]) {
+            shift @parts;
+        }
+        $ancestors[$i] = join(' ', @parts);
+    }
+    return unless @ancestors;
+
+    INFO Dumper(\@ancestors);
+
+    unshift @ancestors, $eolid, $common_name;
+    @ancestors
+} # }}}
+
+sub get_ranks { # {{{
+    my ($taxon) = @_;
+    $taxon =~ s/ /_/g;
+    DEBUG "http://species.wikimedia.org/wiki/$taxon";
+
+    my $response = $ua->get("http://species.wikimedia.org/wiki/$taxon");
+
+    if($response->content =~ /There is currently no text in this page/ && $taxon =~ /_/) {
+        $taxon =~ s/_.*//;
+        DEBUG "No match; trying http://species.wikimedia.org/wiki/$taxon";
+        $response = $ua->get("http://species.wikimedia.org/wiki/$taxon");
+    }
+
+    my $html = $response->content;
+
+    my %ranks;
+
+    $ranks{Kingdom} ||= $1 if $html =~ /Regnum: .*?<a .*? title="(.*?)">/;
+
+    $ranks{Phylum}  ||= $1 if $html =~ /Phylum: .*?<a .*? title="(.*?)">/;
+    $ranks{Phylum}  ||= $1 if $html =~ /Division?: .*?<a .*? title="(.*?)">/;
+    $ranks{Phylum} ||= 'Magnoliophyta' if $html =~ /Cladus: .*Angiosperms/;
+
+    if($html =~ /Classis: .*Classis: /s) {
+        $html =~ s/Classis:/derp/s;
+    }
+    if($html =~ /Ordo: .*Ordo: /s) {
+        $html =~ s/Ordo:/derp/s;
+    }
+
+    $ranks{Class}   ||= $1 if $html =~ /Classis: .*?<a .*? title="(.*?)"/;
+    $ranks{Order}   ||= $1 if $html =~ /Ordo: .*?<a .*? title="(.*?)"/;
+    $ranks{Family}  ||= $1 if $html =~ /Familia: .*?<a .*? title="(.*?)"/;
+    $ranks{Genus}   ||= $1 if $html =~ /Genus: <i><strong class="selflink">(.*?)</;
+    $ranks{Genus}   ||= $1 if $html =~ /Genus: .*?<a .*? title="(.*?)"/;
+    $ranks{Genus}   ||= $1 if $_[0] =~ /(.*?) \w+/;
+    $ranks{Genus} =~ s/ .*//;
+
+    INFO Dumper(\%ranks);
+
+    %ranks
+} # }}}
+
+# vi:foldmethod=marker:
