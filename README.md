@@ -54,25 +54,25 @@ go all the way to `taxonomy:trinomial=Canis lupus familiaris`.
 Usage
 -----
 
-Usage: cladr \[options\] \[photoids...\]
+    Usage: cladr \[options\] \[photoids...\]
 
-Options:
-    -h --help               Print help and exit
-    -b --before-date        Look for photos prior to this date
-    -c --skip-clades        Skip tagging with clades
-    -r --skip-ranks         Skip tagging with ranks
-    -E --skip-eolid         Skip tagging with EOLID
-    -C --skip-common        Skip tagging with common name
-    -t --tags=foo,bar       Restrict to photos tagged thusly
-    -T --threshold=8        Number of tags before assuming photo already tagged
-    -e --eolid=31415        Assume this EOLID for the photos
-    -B --binomen='Foo bar'  Assume this binomen for the photos
-    -G --genus=Foo          Assume this genus for the photos
-    -F --family=Foo         Assume this family for the photos
-    --from-file             Read Flickr photo IDs from this file
-    -t --token              Authentication token if not in ~/.cladrrc
-    -u --user               User if not in ~/.cladrrc
-    -v --verbosity          How much yammering to do
-    -f --force              Force tagging, even if tagged as unidentified
-    -y --yes                Answer "yes" to all questions; run non-interactively
+    Options:
+        -h --help               Print help and exit
+        -b --before-date        Look for photos prior to this date
+        -c --skip-clades        Skip tagging with clades
+        -r --skip-ranks         Skip tagging with ranks
+        -E --skip-eolid         Skip tagging with EOLID
+        -C --skip-common        Skip tagging with common name
+        -t --tags=foo,bar       Restrict to photos tagged thusly
+        -T --threshold=8        Number of tags before assuming photo already tagged
+        -e --eolid=31415        Assume this EOLID for the photos
+        -B --binomen='Foo bar'  Assume this binomen for the photos
+        -G --genus=Foo          Assume this genus for the photos
+        -F --family=Foo         Assume this family for the photos
+        --from-file             Read Flickr photo IDs from this file
+        -t --token              Authentication token if not in ~/.cladrrc
+        -u --user               User if not in ~/.cladrrc
+        -v --verbosity          How much yammering to do
+        -f --force              Force tagging, even if tagged as unidentified
+        -y --yes                Answer "yes" to all questions; run non-interactively
 
