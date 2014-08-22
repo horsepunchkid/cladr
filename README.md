@@ -54,7 +54,7 @@ go all the way to `taxonomy:trinomial=Canis lupus familiaris`.
 Usage
 -----
 
-    Usage: cladr \[options\] \[photoids...\]
+    Usage: cladr [options] [photoids...]
 
     Options:
         -h --help               Print help and exit
