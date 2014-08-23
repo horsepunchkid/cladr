@@ -556,6 +556,8 @@ sub get_ranks { # {{{
     $ranks{Genus}   ||= $1 if $_[0] =~ /(.*?) \w+/;
     $ranks{Genus} =~ s/ .*//;
 
+    delete $ranks{Genus} unless $ranks{Genus};
+
     INFO Dumper(\%ranks);
 
     %ranks
