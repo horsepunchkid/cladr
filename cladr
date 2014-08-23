@@ -166,6 +166,11 @@ sub process_photo { # {{{
     next if @tags > $threshold;
     next if !$force && first { $_ eq 'taxonomy:identified=0' } @tags;
     my $taxon = $fix_binomen || $fix_genus || $fix_family || get_most_specific_tag(@tags);
+    if(!$taxon) {
+        print "Enter a taxon (or nothing to cancel): ";
+        $taxon = <STDIN>;
+        return unless $taxon;
+    }
 
     my @tags_to_add;
 
