@@ -169,6 +169,7 @@ sub process_photo { # {{{
     if(!$taxon) {
         print "Enter a taxon (or nothing to cancel): ";
         $taxon = <STDIN>;
+        chomp $taxon;
         return unless $taxon;
     }
 
@@ -180,7 +181,13 @@ sub process_photo { # {{{
     }
 
     if(!$skip_clades || !$skip_eolid || !$skip_common) {
-        my $eolid = $fix_eolid || get_eolid(@tags);
+        my $eolid = $fix_eolid || get_eolid(@tags, @tags_to_add);
+        if(!$eolid) {
+            print "Enter an EOLID or taxon (or nothing to cancel): ";
+            $eolid = <STDIN>;
+            chomp $eolid;
+            $eolid = get_eolid("taxonomy:genus=$eolid") unless $eolid =~ /^\d+$/;
+        }
         my @clades = $eolid ? @{ $cmap{$eolid} ||= [get_clades($eolid)] } : ();
         push @tags_to_add, cladify_photo($photo_id, @clades);
     }
@@ -550,7 +557,9 @@ sub get_ranks { # {{{
 
     $ranks{Class}   ||= $1 if $html =~ /Classis: .*?<a .*? title="(.*?)"/;
     $ranks{Order}   ||= $1 if $html =~ /Ordo: .*?<a .*? title="(.*?)"/;
+    $ranks{Order}   ||= $1 if $html =~ /Ordo: .*?<strong class="selflink">(.*?)</;
     $ranks{Family}  ||= $1 if $html =~ /Familia: .*?<a .*? title="(.*?)"/;
+    $ranks{Family}  ||= $1 if $html =~ /Familia: .*?<strong class="selflink">(.*?)</;
     $ranks{Genus}   ||= $1 if $html =~ /Genus: <i><strong class="selflink">(.*?)</;
     $ranks{Genus}   ||= $1 if $html =~ /Genus: .*?<a .*? title="(.*?)"/;
     $ranks{Genus}   ||= $1 if $_[0] =~ /(.*?) \w+/;
