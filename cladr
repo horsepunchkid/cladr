@@ -263,12 +263,17 @@ sub cladify_photo { # {{{
 
         my $use;
         if(!$yes) {
-            print "Use these tags? [Y/n/u/-/+] ";
+            print "Use these tags? [Y/n/u/-/+/w] ";
             $use = <STDIN>;
             chomp $use;
         }
         else {
             $use = 'y';
+        }
+
+        if($use =~ /^w$/i) {
+            `x-www-browser https://flickr.com/photos/$user/$photo_id`;
+            next;
         }
 
         return if $use =~ /^n$/i;
@@ -311,7 +316,7 @@ sub rankify_photo { # {{{
     }
     while(1) {
         DEBUG Dumper(\@rank_tags);
-        print "Use these tags? [Y/n/-/+] ";
+        print "Use these tags? [Y/n/-/+/w] ";
         my $use = <STDIN>;
         chomp $use;
         return if $use =~ /^n$/i;
@@ -321,6 +326,10 @@ sub rankify_photo { # {{{
             return rankify_photo($photo_id, get_ranks($use));
         }
         last if !$use || $use =~ /^y$/i;
+        if($use =~ /^w$/i) {
+            `x-www-browser https://flickr.com/photos/$user/$photo_id`;
+            next;
+        }
     }
     @rank_tags
 } # }}}
