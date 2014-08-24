@@ -271,7 +271,7 @@ sub cladify_photo { # {{{
 
         if($use =~ /^\+(.+)/) {
             my $new_tag = $1;
-            if($use =~ /^\+(\w+):(\w+)=(\w+)$/) {
+            if($use =~ /^\+(\w+):(\w+)=(.+)$/) {
                 @clade_tags = grep { $_ !~/^$1:$2=/ } @clade_tags;
             }
             push @clade_tags, $new_tag;
