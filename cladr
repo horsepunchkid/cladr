@@ -177,6 +177,9 @@ sub process_photo { # {{{
 
     if(!$skip_ranks) {
         my %ranks = @{ $rmap{$taxon} ||= [get_ranks($taxon)] };
+        $ranks{Binomial} = $fix_binomen if $fix_binomen;
+        $ranks{Genus}    = $fix_genus   if $fix_genus;
+        $ranks{Family}   = $fix_family  if $fix_family;
         push @tags_to_add, rankify_photo($photo_id, %ranks);
     }
 
@@ -310,7 +313,7 @@ sub rankify_photo { # {{{
     my $photo_id = shift;
     my %ranks = @_;
     my @rank_tags;
-    for(@taxa) {
+    for(@taxa, qw(Binomial Trinomial)) {
         next unless $ranks{$_};
         push @rank_tags, "taxonomy:".lc($_)."=$ranks{$_}";
     }
