@@ -24,6 +24,7 @@ my (
     $search_tags,
     $threshold,
     $fix_eolid,
+    $fix_trinomen,
     $fix_binomen,
     $fix_genus,
     $fix_family,
@@ -51,6 +52,7 @@ my $opts = GetOptions(
     'tags|t=s'          => \$search_tags,
     'threshold|T=i'     => \$threshold,
     'eolid|e=i'         => \$fix_eolid,
+    'trinomen|3=s'      => \$fix_trinomen,
     'binomen|B=s'       => \$fix_binomen,
     'genus|G=s'         => \$fix_genus,
     'family|F=s'        => \$fix_family,
@@ -76,6 +78,7 @@ Options:
     -t --tags=foo,bar       Restrict to photos tagged thusly
     -T --threshold=8        Number of tags before assuming photo already tagged
     -e --eolid=31415        Assume this EOLID for the photos
+    -3 --trinomen='A b c'   Assume this trinomen for the photos
     -B --binomen='Foo bar'  Assume this binomen for the photos
     -G --genus=Foo          Assume this genus for the photos
     -F --family=Foo         Assume this family for the photos
@@ -137,6 +140,8 @@ my @taxa = qw(Kingdom Phylum Class Order Family Genus Species);
 my %taxa;
 $taxa{$_} = keys %taxa for @taxa;
 
+$fix_binomen = "$1 $2" if $fix_trinomen =~ /^(\w+) (\w+) \w+$/;
+
 my @photos = @ARGV ? @ARGV
     : $from_file ? ()
     : get_species_photos();
@@ -177,9 +182,10 @@ sub process_photo { # {{{
 
     if(!$skip_ranks) {
         my %ranks = @{ $rmap{$taxon} ||= [get_ranks($taxon)] };
-        $ranks{Binomial} = $fix_binomen if $fix_binomen;
-        $ranks{Genus}    = $fix_genus   if $fix_genus;
-        $ranks{Family}   = $fix_family  if $fix_family;
+        $ranks{Trinomial}   = $fix_trinomen if $fix_trinomen;
+        $ranks{Binomial}    = $fix_binomen  if $fix_binomen;
+        $ranks{Genus}       = $fix_genus    if $fix_genus;
+        $ranks{Family}      = $fix_family   if $fix_family;
         push @tags_to_add, rankify_photo($photo_id, %ranks);
     }
 
