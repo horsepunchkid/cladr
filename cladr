@@ -170,7 +170,7 @@ sub process_photo { # {{{
     my @tags = get_tags($photo_id);
     next if @tags > $threshold;
     next if !$force && first { $_ eq 'taxonomy:identified=0' } @tags;
-    my $taxon = $fix_binomen || $fix_genus || $fix_family || get_most_specific_tag(@tags);
+    my $taxon = $fix_trinomen || $fix_binomen || $fix_genus || $fix_family || get_most_specific_tag(@tags);
     if(!$taxon) {
         print "Enter a taxon (or nothing to cancel): ";
         $taxon = <STDIN>;
@@ -184,6 +184,7 @@ sub process_photo { # {{{
         my %ranks = @{ $rmap{$taxon} ||= [get_ranks($taxon)] };
         $ranks{Trinomial}   = $fix_trinomen if $fix_trinomen;
         $ranks{Binomial}    = $fix_binomen  if $fix_binomen;
+        $ranks{Binomial}    = "$1 $2"       if !$ranks{Binomial} && $taxon =~ /^(\w+) (\w+) \w+$/;
         $ranks{Genus}       = $fix_genus    if $fix_genus;
         $ranks{Family}      = $fix_family   if $fix_family;
         push @tags_to_add, rankify_photo($photo_id, %ranks);
