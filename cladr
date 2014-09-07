@@ -386,6 +386,7 @@ sub get_species_photos { # {{{
         sort => 'date-posted-desc',
         max_upload_date => $before_date,
         #extras => 'tags,machine_tags',
+        auth_token => $token,
     });
     WARN "Bad response from search!" unless $response->is_success;
     return unless $response->is_success;
@@ -401,6 +402,7 @@ sub get_tags { # {{{
     INFO "http://flickr.com/photos/$user/$photo/";
     my $response = $flickr->execute_method('flickr.photos.getInfo', {
         photo_id => $photo,
+        auth_token => $token,
     });
     my $xpath = new XML::Parser::Lite::Tree::XPath($response->{tree});
 
