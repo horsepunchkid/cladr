@@ -29,6 +29,7 @@ my (
     $fix_genus,
     $fix_family,
     $from_file,
+    $from_set,
     $config,
     $token,
     $user,
@@ -57,6 +58,7 @@ my $opts = GetOptions(
     'genus|G=s'         => \$fix_genus,
     'family|F=s'        => \$fix_family,
     'from-file=s'       => \$from_file,
+    'set|S=s'           => \$from_set,
     'token|t=s'         => \$token,
     'user|u=s'          => \$user,
     'verbosity|v+'      => \$verbosity,
@@ -83,6 +85,7 @@ Options:
     -G --genus=Foo          Assume this genus for the photos
     -F --family=Foo         Assume this family for the photos
     --from-file             Read Flickr photo IDs from this file
+    -S --set                Tag photos in this set
     -t --token              Authentication token if not in ~/.cladrrc
     -u --user               User if not in ~/.cladrrc
     -v --verbosity          How much yammering to do
@@ -143,17 +146,38 @@ $taxa{$_} = keys %taxa for @taxa;
 $fix_binomen = "$1 $2" if $fix_trinomen =~ /^(\w+) (\w+) \w+$/;
 
 my @photos = @ARGV ? @ARGV
-    : $from_file ? ()
+    : $from_file || $from_set ? ()
     : get_species_photos();
 
 # Cache clades and ranks
 my %cmap;
 my %rmap;
 
+if($from_set) {
+    my $response = $flickr->execute_method('flickr.photosets.getPhotos', {
+        photoset_id => $from_set,
+        extras => 'machine_tags',
+        auth_token => $token,
+    });
+    my $xpath = new XML::Parser::Lite::Tree::XPath($response->{tree});
+    my $p = $xpath->select_nodes('//photo');
+    warn "No photos found for set $from_set!\n" and exit 3 unless ref $p eq 'ARRAY';
+    my $total = @$p;
+    my $tagged = 0;
+    for(@$p) {
+        my @mt = split / /, $_->{attributes}{machine_tags};
+        next unless first { /^taxonomy:/ } @mt;
+        push @photos, $_->{attributes}{id};
+        $tagged++;
+    }
+    INFO "$tagged of $total photos in set have taxonomy tags";
+}
+
 for(@photos) {
     process_photo($_);
 }
 
+# Do $from_file last in case it's a pipe
 if($from_file) {
     open FILE, $from_file or die "Couldn't open from-file!\n";
     while(<FILE>) {
