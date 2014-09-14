@@ -391,13 +391,13 @@ sub authenticate { # {{{
     my $response = $flickr->execute_method('flickr.auth.getToken', { frob => $frob });
     my $xpath = new XML::Parser::Lite::Tree::XPath($response->{tree});
     $token = $xpath->select_nodes('//token')->[0]{children}->[0]{content};
-    print Dumper($xpath->select_nodes('//user'));
     $user = $xpath->select_nodes('//user')->[0]{attributes}{nsid};
     print "\nYour token: $token\n";
 
     open RC, ">$config" or (warn "Couldn't open $config to save token!\n" and return);
     print RC "token = $token\nuser = $user\n";
     close RC;
+    chmod 0600, $config;
     print "Token saved to ~/.cladrrc\n";
 } # }}}
 
