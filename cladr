@@ -105,6 +105,8 @@ USAGE
     }
 }
 
+$threshold = 999 if $force;
+
 # }}}
 
 Log::Log4perl->easy_init({
