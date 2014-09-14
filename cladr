@@ -30,6 +30,7 @@ my (
     $fix_family,
     $from_file,
     $from_set,
+    $regular_tags,
     $config,
     $token,
     $user,
@@ -59,6 +60,7 @@ my $opts = GetOptions(
     'family|F=s'        => \$fix_family,
     'from-file=s'       => \$from_file,
     'set|S=s'           => \$from_set,
+    'regular-tags|R'    => \$regular_tags,
     'token|t=s'         => \$token,
     'user|u=s'          => \$user,
     'verbosity|v+'      => \$verbosity,
@@ -86,6 +88,7 @@ Options:
     -F --family=Foo         Assume this family for the photos
     --from-file             Read Flickr photo IDs from this file
     -S --set                Tag photos in this set
+    -R --regular-tags       Also add non-machine tags for ranks
     -t --token              Authentication token if not in ~/.cladrrc
     -u --user               User if not in ~/.cladrrc
     -v --verbosity          How much yammering to do
@@ -212,6 +215,13 @@ sub process_photo { # {{{
         $ranks{Genus}       = $fix_genus    if $fix_genus;
         $ranks{Family}      = $fix_family   if $fix_family;
         push @tags_to_add, rankify_photo($photo_id, %ranks);
+
+        if($regular_tags) {
+            my %ranks_to_add;
+            $ranks_to_add{$ranks{$_}} = 1 for keys %ranks;
+            $ranks_to_add{$taxon} = 1;
+            push @tags_to_add, $_ for keys %ranks_to_add;
+        }
     }
 
     if(!$skip_clades || !$skip_eolid || !$skip_common) {
