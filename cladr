@@ -5,6 +5,7 @@ use strict;
 use Getopt::Long qw(:config no_ignore_case no_auto_abbrev);
 use LWP::UserAgent;
 use URI::Encode 'uri_encode';
+use JSON 'decode_json';
 use HTML::TreeBuilder;
 use HTML::TreeBuilder::XPath;
 use Flickr::API;
@@ -455,114 +456,82 @@ sub get_tags { # {{{
 sub find_eolid { # {{{
     my $taxon = join ' ', @_;
 
-    my $eolid;
-
-    my $url = "http://eol.org/search?q=".uri_encode($taxon);
+    my $url = "http://eol.org/api/search/1.0.json?q=".uri_encode($taxon)."&exact=true";
     my $response = $ua->get($url);
+    my $result = decode_json($response->decoded_content);
 
-    if($response->request->uri =~ qr{/pages/(\d+)}) {
-        $eolid = $1;
+    if($result->{totalResults} == 0) {
+        INFO "No search results";
+        return;
+    }
+
+    my $match;
+    if($result->{totalResults} == 1) {
+        $match = $result->{results}[0];
     }
     else {
-        INFO "Ambiguous search result $url";
-        my $tree = HTML::TreeBuilder::XPath->new_from_content($response->content);
-        my @items = $tree->findnodes(q{//ul[@class='object_list']/li[@class='taxon']});
-        return unless @items;
-        my %results;
-        for(@items) {
-            $_->detach;
-            my $name = $_->findvalue('//h4');
-            next unless $name;
-            my $id = $_->findvalue(q{//h4/a/@href});
-            $id =~ s{/pages/(\d+)/overview}{$1};
-            $results{$name} = $id if !$results{$name} || $id < $results{$name};
+        INFO "Ambiguous search result";
+        for(@{ $result->{results} }) {
+            $match = $_;
+            last if $_->{title} =~ /^$taxon/;
         }
-        my @preferred = sort {
-            (($taxon eq $b) <=> ($taxon eq $a))
-            || ($taxon =~ /$b/ || $b =~ /$taxon/
-                <=> $taxon =~ /$a/ || $a =~ /$taxon/)
-            || $results{$a} <=> $results{$b}
-        } keys %results;
-        DEBUG Dumper(join("\n", map { "$_ ($results{$_})" } @preferred));
-        my $best = $preferred[0];
-        DEBUG "Gonna go with /$best/ -- http://eol.org/pages/$results{$best}";
-        $eolid = $results{$best};
     }
 
-    $eolid
+    INFO "Found '$match->{title}' ($match->{id})";
+
+    $match->{id};
 } # }}}
 
 sub get_clades { # {{{
     my ($eolid) = @_;
-    my $base = "http://eol.org/pages/$eolid";
 
-    my $response;
-    my $tree;
+    my $response = $ua->get("http://eol.org/api/pages/1.0/$eolid.json?images=2&videos=0&sounds=0&maps=0&text=2&iucn=false&subjects=overview&licenses=all&details=false&common_names=true&synonyms=false&references=false&vetted=0");
+    my $result = decode_json($response->decoded_content);
 
-    $response = $ua->get("$base");
-    $tree = HTML::TreeBuilder->new_from_content($response->decoded_content);
-    my $common_name = $tree->look_down(_tag => 'h2', title => qr/Preferred common name/);
-    if($common_name) {
-        $common_name = $common_name->content->[0];
-        $common_name =~ s/^\s+//;
-        $common_name =~ s/\s+$//;
+    if(ref $result->{taxonConcepts} ne 'ARRAY') {
+        WARN "No suitable nomenclature found!";
+        return;
     }
 
-    $response = $ua->get("$base/names");
-    $tree = HTML::TreeBuilder->new_from_content($response->decoded_content);
+    my $source = first { $_->{nameAccordingTo} =~ /Catalogue of Life/ } @{ $result->{taxonConcepts} };
 
-    my $orgs = $tree->look_down(_tag => 'table', class => 'standard classifications');
-    my @orgs = $orgs->look_down(_tag => 'tr') if $orgs;
-    WARN "No nomenclatures available" unless @orgs;
-    return unless @orgs;
-    DEBUG @orgs ." nomenclature(s) found at $base/names";
-    my $hierarchy_entry;
-    for(@orgs) {
-        my ($td) = $_->descendants;
-        my $classification = $_->look_down(_tag => 'a', href => qr/content_partners/);
-        next unless $classification;
-        $classification = $classification->content->[0];
-        if($classification =~ /Catalogue of Life/) {
-            DEBUG "Found in ITIS Catalogue of Life";
-            my $a = $td->content->[2];
-            my $href = $a->{href};
-            $hierarchy_entry = $1 if $href =~ m{/pages/$eolid/hierarchy_entries/(\d+)/overview};
-        }
+    if(!$source) {
+        WARN "No ITIS entry found for $eolid!";
+        return;
     }
-    if(!$hierarchy_entry) {
-        for(@orgs) {
-            my ($td) = $_->descendants;
-            next unless $td->tag eq 'td';
-            my $classification = $td->content->[0]->content->[1]->content->[0];;
-            if($classification =~ /NCBI/) {
-                DEBUG "Found in NCBI";
-                my $a = $td->content->[2];
-                my $href = $a->{href};
-                $hierarchy_entry = $1 if $href =~ m{/pages/$eolid/hierarchy_entries/(\d+)/overview};
-            }
-        }
+
+    my $common_name;
+    if(ref $result->{vernacularNames} ne 'ARRAY') {
+        WARN "No common names found!";
     }
-    WARN "No suitable nomenclature found!" unless $hierarchy_entry;
-    return unless $hierarchy_entry;
+    else {
+        $common_name = first { $_->{language} eq 'en' && $_->{eol_preferred} } @{ $result->{vernacularNames} };
+        $common_name = $common_name->{vernacularName};
+        INFO "Common name: $common_name";
+    }
 
-    DEBUG "http://eol.org/pages/$eolid/hierarchy_entries/$hierarchy_entry/tree?full=true";
-    $response = $ua->get("http://eol.org/pages/$eolid/hierarchy_entries/$hierarchy_entry/tree?full=true");
+    $response = $ua->get("http://eol.org/api/hierarchy_entries/1.0/$source->{identifier}.json?common_names=true&synonyms=false");
+    $result = decode_json($response->decoded_content);
 
-    $tree = HTML::TreeBuilder::XPath->new_from_content($response->content);
-    my $li = $tree->findnodes('/html/body/ul/li')->shift;
+    if(ref $result->{ancestors} ne 'ARRAY') {
+        WARN "No ancestors found in nomenclature!";
+        return;
+    }
+
     my @ancestors;
-    while(1) {
-        my $t = $li->findvalue('.');
-        $t =~ s/\+.*//;
-        $t =~ s/^ //;
-        $t =~ s/ $//;
-        $t =~ s/ [A-Z].*//;
-        $t =~ s/ \(.*//;
-        push @ancestors, $t;
-        last unless $li->exists('./a');
-        $li = $li->findnodes('./ul/li')->shift;
-        last unless $li;
+    for(@{ $result->{ancestors} }) {
+        push @ancestors, $_->{scientificName};
     }
+    push @ancestors, $result->{scientificName};
+
+    for(@ancestors) {
+        s/\+.*//;
+        s/^ //;
+        s/ $//;
+        s/ [A-Z].*//;
+        s/ \(.*//;
+    }
+
     for(my $i = 0; $i < @ancestors; $i++) {
         next unless $ancestors[$i] =~ / /;
         my @parts = split / /, $ancestors[$i];
@@ -574,7 +543,6 @@ sub get_clades { # {{{
         }
         $ancestors[$i] = join(' ', @parts);
     }
-    return unless @ancestors;
 
     INFO Dumper(\@ancestors);
 
