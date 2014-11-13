@@ -522,7 +522,7 @@ sub get_clades { # {{{
     for(@{ $result->{ancestors} }) {
         push @ancestors, $_->{scientificName};
     }
-    push @ancestors, $result->{scientificName};
+    push @ancestors, ucfirst($result->{scientificName});
 
     for(@ancestors) {
         s/\+.*//;
