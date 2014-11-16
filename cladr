@@ -473,7 +473,13 @@ sub find_eolid { # {{{
         INFO "Ambiguous search result";
         for(@{ $result->{results} }) {
             $match = $_;
-            last if $_->{title} =~ /^$taxon/;
+            last if $_->{title} eq $taxon;
+        }
+        if(!$match) {
+            for(@{ $result->{results} }) {
+                $match = $_;
+                last if $_->{title} =~ /^$taxon/;
+            }
         }
     }
 
