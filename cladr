@@ -198,17 +198,52 @@ sub process_photo { # {{{
     print "\n===============================\n";
     DEBUG "Looking at $photo_id";
     my @tags = get_tags($photo_id);
+    next if @tags > $threshold;
+    next if !$force && first { $_ eq 'taxonomy:identified=0' } @tags;
+    my $taxon = $fix_trinomen || $fix_binomen || $fix_genus || $fix_family || get_most_specific_tag(@tags);
+    if(!$taxon) {
+        print "Enter a taxon (or nothing to cancel): ";
+        $taxon = <STDIN>;
+        chomp $taxon;
+        return unless $taxon;
+    }
 
-    my %ranks_to_add;
+    my @tags_to_add;
 
-    for(@tags) {
-        if(/^taxonomy:(class|order|family|genus|binomial|trinomial)=(.+)$/) {
-            next if first { $_ eq $2 } @tags;
-            $ranks_to_add{$2} = 1;
+    if(!$skip_ranks) {
+        my %ranks = @{ $rmap{$taxon} ||= [get_ranks($taxon)] };
+        $ranks{Trinomial}   = $fix_trinomen if $fix_trinomen;
+        $ranks{Binomial}    = $fix_binomen  if $fix_binomen;
+        $ranks{Binomial}    = "$1 $2"       if !$ranks{Binomial} && $taxon =~ /^(\w+) (\w+) \w+$/;
+        $ranks{Genus}       = $fix_genus    if $fix_genus;
+        $ranks{Family}      = $fix_family   if $fix_family;
+        push @tags_to_add, rankify_photo($photo_id, %ranks);
+
+        if($regular_tags) {
+            my %ranks_to_add;
+            $ranks_to_add{$ranks{$_}} = 1 for keys %ranks;
+            $ranks_to_add{$taxon} = 1;
+            push @tags_to_add, $_ for keys %ranks_to_add;
         }
     }
 
-    my @new_tags = keys %ranks_to_add;
+    if(!$skip_clades || !$skip_eolid || !$skip_common) {
+        my $eolid = $fix_eolid || get_eolid(@tags, @tags_to_add);
+        if(!$eolid) {
+            print "Enter an EOLID or taxon (or nothing to cancel): ";
+            $eolid = <STDIN>;
+            chomp $eolid;
+            $eolid = get_eolid("taxonomy:genus=$eolid") unless $eolid =~ /^\d+$/;
+        }
+        my @clades = $eolid ? @{ $cmap{$eolid} ||= [get_clades($eolid)] } : ();
+        push @tags_to_add, cladify_photo($photo_id, @clades);
+    }
+
+    my %tag_set = map { $_ => 1 } @tags;
+    my @new_tags = grep { !$tag_set{$_} } @tags_to_add;
+
+    INFO "No new tags to add" unless @new_tags;
+    next unless @new_tags;
 
     DEBUG "Tags to add: ".Dumper(\@new_tags);
     sleep 5 if $yes;
