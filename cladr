@@ -472,13 +472,20 @@ sub find_eolid { # {{{
     else {
         INFO "Ambiguous search result";
         for(@{ $result->{results} }) {
-            $match = $_;
-            last if $_->{title} eq $taxon;
+            if($_->{title} eq $taxon) {
+                $match = $_;
+                DEBUG "Exact title match found";
+                last;
+            }
         }
         if(!$match) {
+            DEBUG "No exact match";
             for(@{ $result->{results} }) {
-                $match = $_;
-                last if $_->{title} =~ /^$taxon/;
+                if($_->{title} =~ /^$taxon/) {
+                    $match = $_;
+                    DEBUG "Approximate title match found";
+                    last;
+                }
             }
         }
     }
