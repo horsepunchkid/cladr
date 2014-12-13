@@ -575,6 +575,20 @@ sub get_ranks { # {{{
         DEBUG "No match; trying http://species.wikimedia.org/wiki/$taxon";
         $response = $ua->get("http://species.wikimedia.org/wiki/$taxon");
     }
+    elsif($response->content =~ /Category:Disambiguation pages/) {
+        DEBUG "Ambiguous taxon";
+        my (@regna) = grep /In the Regnum/, split /\n/, $response->content;
+        map { s{.*?</a> - <a href="/wiki/}{}; s/".*//; } @regna;
+        if(@regna) {
+            DEBUG "Possibilities include:\n  ".join("\n  ", @regna);
+        }
+        else {
+            DEBUG "No specific matches found.";
+        }
+        print "Enter a specific choice (or nothing to cancel): ";
+        $taxon = <STDIN>;
+        return get_ranks($taxon);
+    }
 
     my $html = $response->content;
 
