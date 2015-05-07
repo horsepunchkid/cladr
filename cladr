@@ -526,9 +526,8 @@ sub get_clades { # {{{
     $response = $ua->get("http://eol.org/api/hierarchy_entries/1.0/$source->{identifier}.json?common_names=true&synonyms=false");
     $result = decode_json($response->decoded_content);
 
-    if(ref $result->{ancestors} ne 'ARRAY') {
+    if(ref $result->{ancestors} ne 'ARRAY' || !@{ $result->{ancestors} }) {
         WARN "No ancestors found in nomenclature!";
-        return;
     }
 
     my @ancestors;
