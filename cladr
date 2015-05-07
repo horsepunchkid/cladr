@@ -306,7 +306,7 @@ sub cladify_photo { # {{{
     }
     WARN "Too many clades" if @clades > 11;
     while(1) {
-        DEBUG Dumper(\@clade_tags);
+        DEBUG "Clade tags: ", Dumper(\@clade_tags);
 
         my $use;
         if(!$yes) {
@@ -362,7 +362,7 @@ sub rankify_photo { # {{{
         push @rank_tags, "taxonomy:".lc($_)."=$ranks{$_}";
     }
     while(1) {
-        DEBUG Dumper(\@rank_tags);
+        DEBUG "Rank tags: ", Dumper(\@rank_tags);
         print "Use these tags? [Y/n/-/+/w] ";
         my $use = <STDIN>;
         chomp $use;
@@ -448,7 +448,7 @@ sub get_tags { # {{{
         $_->{name} eq 'tag' ? $_->{attributes}{raw} : ()
     } @{$xpath->select_nodes('//tags')->[0]{children}};
 
-    INFO Dumper(\@tags);
+    INFO "Tags: ", Dumper(\@tags);
 
     @tags
 } # }}}
@@ -556,7 +556,7 @@ sub get_clades { # {{{
         $ancestors[$i] = join(' ', @parts);
     }
 
-    INFO Dumper(\@ancestors);
+    INFO "Ancestors: ", Dumper(\@ancestors);
 
     unshift @ancestors, $eolid, $common_name;
     @ancestors
@@ -618,7 +618,7 @@ sub get_ranks { # {{{
 
     delete $ranks{Genus} unless $ranks{Genus};
 
-    INFO Dumper(\%ranks);
+    INFO "Ranks: ", Dumper(\%ranks);
 
     %ranks
 } # }}}
