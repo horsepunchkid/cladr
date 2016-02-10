@@ -215,6 +215,7 @@ sub process_photo { # {{{
         $ranks{Trinomial}   = $fix_trinomen if $fix_trinomen;
         $ranks{Binomial}    = $fix_binomen  if $fix_binomen;
         $ranks{Binomial}    = "$1 $2"       if !$ranks{Binomial} && $taxon =~ /^(\w+) (\w+) \w+$/;
+        $ranks{Binomial}    = $taxon        if !$ranks{Binomial} && $taxon =~ /^[A-Z][a-z-]+ [a-z-]+$/;
         $ranks{Genus}       = $fix_genus    if $fix_genus;
         $ranks{Family}      = $fix_family   if $fix_family;
         push @tags_to_add, rankify_photo($photo_id, %ranks);
@@ -260,6 +261,16 @@ sub get_most_specific_tag { # {{{
         DEBUG "Rank $rank" if $taxon;
         last if $taxon;
     }
+    if(!$taxon) {
+        for(@tags) {
+            if(/^[A-Z][a-z-]+ [a-z-]+ [a-z-]+$/) {
+                $taxon = $_;
+            }
+            elsif(/^[A-Z][a-z-]+ [a-z-]+$/) {
+                $taxon = $_;
+            }
+        }
+    }
     WARN "No valid taxon found" unless $taxon;
     return unless $taxon;
     DEBUG "Found taxon /$taxon/";
@@ -298,7 +309,7 @@ sub cladify_photo { # {{{
     my $common_name = shift @clades;
     push @clade_tags, "taxonomy:eolid=$eolid" unless $skip_eolid;
     push @clade_tags, "taxonomy:common=$common_name" if $common_name && !$skip_common;
-    if(!$skip_clades) {
+    if(!$skip_clades && @clades > 1) { # XXX If there is only one clade, it's probably not a root clade, but it might be.
         push @clade_tags, "taxonomy:claderoot=$clades[0]";
         for(my $i=0; $i<@clades-1; $i++) {
             push @clade_tags, "clade:$clades[$i]=$clades[$i+1]";
@@ -389,7 +400,26 @@ sub add_tags { # {{{
         tags => join(' ', map { "\"$_\"" } @tags),
         auth_token => $token,
     });
-    # XXX confirm response
+    if(!$response->is_success) {
+        WARN "Bad response!";
+        DEBUG $response->decoded_content;
+    }
+
+    my $xpath = new XML::Parser::Lite::Tree::XPath($response->{tree});
+    INFO "Tagging complete.";
+
+    if(0) {
+        WARN "Failed to add tags: ", $response->message;
+        print "Try again? [Y/n] ";
+        my $retry = <STDIN>;
+        chomp $retry;
+        if(!$retry || $retry =~ /y/i) {
+            add_tags(@_);
+        }
+        else {
+            INFO "Skipping adding tags";
+        }
+    }
 } # }}}
 
 sub authenticate { # {{{
@@ -501,6 +531,13 @@ sub get_clades { # {{{
     my $response = $ua->get("http://eol.org/api/pages/1.0/$eolid.json?images=2&videos=0&sounds=0&maps=0&text=2&iucn=false&subjects=overview&licenses=all&details=false&common_names=true&synonyms=false&references=false&vetted=0");
     my $result = decode_json($response->decoded_content);
 
+    if(ref $result ne 'HASH') {
+        WARN "Error interpreting EOL response:";
+        DEBUG Dumper("http://eol.org/api/pages/1.0/$eolid.json?images=2&videos=0&sounds=0&maps=0&text=2&iucn=false&subjects=overview&licenses=all&details=false&common_names=true&synonyms=false&references=false&vetted=0");
+        DEBUG Dumper($result);
+        return;
+    }
+
     if(ref $result->{taxonConcepts} ne 'ARRAY') {
         WARN "No suitable nomenclature found!";
         return;
@@ -510,7 +547,7 @@ sub get_clades { # {{{
 
     if(!$source) {
         WARN "No ITIS entry found for $eolid!";
-        return;
+        return $eolid;
     }
 
     my $common_name;
@@ -525,6 +562,13 @@ sub get_clades { # {{{
 
     $response = $ua->get("http://eol.org/api/hierarchy_entries/1.0/$source->{identifier}.json?common_names=true&synonyms=false");
     $result = decode_json($response->decoded_content);
+
+    if(ref $result ne 'HASH') {
+        WARN "Error interpreting EOL response:";
+        DEBUG Dumper("http://eol.org/api/hierarchy_entries/1.0/$source->{identifier}.json?common_names=true&synonyms=false");
+        DEBUG Dumper($result);
+        return $eolid, $common_name;
+    }
 
     if(ref $result->{ancestors} ne 'ARRAY' || !@{ $result->{ancestors} }) {
         WARN "No ancestors found in nomenclature!";
