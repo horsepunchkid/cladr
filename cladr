@@ -503,9 +503,13 @@ sub find_eolid { # {{{
         INFO "Ambiguous search result";
         for(@{ $result->{results} }) {
             if($_->{title} eq $taxon) {
-                $match = $_;
-                DEBUG "Exact title match found";
-                last;
+                if(!$match || $_->{id} < $match->{id}) {
+                    DEBUG "Exact title match found: $_->{id}";
+                    $match = $_;
+                }
+                else {
+                    DEBUG "Exact title match found with higher EOLID: $_->{id}";
+                }
             }
         }
         if(!$match) {
